@@ -1,0 +1,28 @@
+﻿DevXGo JAVA Performance Test Resultater
+========================================
+Script version: 2.3
+Test udført: 2025-11-09 19:26:39
+Computer: DESKTOP-SPM2DK0
+Bruger: DevXGo
+Test folder: C:\DevXGo-test
+
+Maven konfiguration:
+--------------------
+CPU cores: 14
+Threads per core: 4
+Total Maven threads: 56
+
+Resultater:
+-----------
+1. Udpakningstid (Axis):        61.496881 sekunder
+2. Kopieringstid (Axis folder): 12.0972152 sekunder
+3. Cold build tid (første):     263.6715282 sekunder
+4. Warm build tid (gennemsnit): 263.6901509 sekunder
+   - Iterationer: 5
+   - Individuelle tider: 271,5419143, 268,6781561, 268,1247088, 258,9920603, 251,113915 sekunder
+
+Miljø:
+------
+JAVA_HOME: C:\jdk21
+Java version: openjdk version "21.0.5" 2024-10-15 LTS
+Maven version: Apache Maven 3.9.11 (3e54c93a704957b63ee3494413a2b544fd3d825b)
