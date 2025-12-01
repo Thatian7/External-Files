@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Quarkus development environment setup and performance test
 
@@ -26,6 +26,15 @@
 .PARAMETER CleanInstall
     Opretter IntelliJ vmoptions fil med 8GB heap size.
 
+.PARAMETER Cleanup
+    Sletter Quarkus repository efter test er gennemført.
+
+.PARAMETER CleanupIntelliJ
+    Afinstallerer IntelliJ IDEA efter test er gennemført.
+
+.PARAMETER CleanupGit
+    Afinstallerer Git efter test er gennemført.
+
 .EXAMPLE
     .\Test-DevXGoQuarkus.ps1 -GitUserName "John Doe" -GitUserEmail "abc123@bankdata.dk"
     Kører fuld setup og test
@@ -37,6 +46,10 @@
 .EXAMPLE
     .\Test-DevXGoQuarkus.ps1 -GitUserName "John Doe" -GitUserEmail "abc123@bankdata.dk" -CleanInstall
     Kører setup med IntelliJ vmoptions konfiguration
+
+.EXAMPLE
+    .\Test-DevXGoQuarkus.ps1 -GitUserName "John Doe" -GitUserEmail "abc123@bankdata.dk" -Cleanup -CleanupIntelliJ -CleanupGit
+    Kører test og rydder alt op bagefter
 
 .NOTES
     Version: 1.0
@@ -62,7 +75,16 @@ param(
     [switch]$SkipInstall,
     
     [Parameter(Mandatory = $false)]
-    [switch]$CleanInstall
+    [switch]$CleanInstall,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$Cleanup,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$CleanupIntelliJ,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$CleanupGit
 )
 
 #region Functions
@@ -159,7 +181,7 @@ if ($SkipInstall) {
     if ($intellijInstalled) {
         Write-Log "IntelliJ IDEA er allerede installeret" -Level Success
     } else {
-        Write-Log "Installerer IntelliJ IDEA Ultimate via winget..." -Level Info
+        Write-Log "Installerer IntelliJ IDEA Ultimate via winget (dette kan tage op til 10 minutter)..." -Level Info
         
         try {
             $intellijInstallTime = Measure-Operation -Name "IntelliJ IDEA installation" -Operation {
@@ -467,11 +489,30 @@ for ($i = 10; $i -gt 0; $i--) {
 Write-Host "`r                    `r" -NoNewline  # Ryd linjen
 Write-Host ""
 
-# Vent på bruger input
-Write-Host "Tryk ENTER når projektet er fuldt indlæst og klar i IntelliJ..." -ForegroundColor Yellow
+# Første ENTER - gem tiden
+Write-Host "Tryk ENTER når projektet ser ud til at være fuldt indlæst..." -ForegroundColor Yellow
 $null = Read-Host
+$firstEndTime = Get-Date
 
-$endTime = Get-Date
+# Bekræft at projektet er færdigt
+Write-Host ""
+Write-Host "Er projektet FULDT indlæst og klar? (J/N)" -ForegroundColor Yellow
+$confirmation = Read-Host
+
+if ($confirmation -eq 'J' -or $confirmation -eq 'j') {
+    # Brug den første tid
+    $endTime = $firstEndTime
+    Write-Host "Første tid bekræftet" -ForegroundColor Green
+} else {
+    # Fortsæt med at vente
+    Write-Host ""
+    Write-Host "Fortsætter tidstagning..." -ForegroundColor Yellow
+    Write-Host "Tryk ENTER når projektet er FULDT indlæst og klar..." -ForegroundColor Yellow
+    $null = Read-Host
+    $endTime = Get-Date
+    Write-Host "Anden tid registreret" -ForegroundColor Green
+}
+
 $projectLoadTime = $endTime - $startTime
 
 Write-Log "Projekt load tid: $($projectLoadTime.ToString('mm\:ss')) ($([math]::Round($projectLoadTime.TotalSeconds, 2)) sekunder)" -Level Success
@@ -562,6 +603,231 @@ IntelliJ projekt load tid: $([math]::Round($projectLoadTime.TotalSeconds, 2)) se
 Set-Content -Path $resultsFile -Value $results -Encoding UTF8
 Write-Log "Resultater gemt til: $resultsFile" -Level Success
 
+#endregion
+
+#region Cleanup
+if ($Cleanup -or $CleanupIntelliJ -or $CleanupGit) {
+    Write-Log "" -Level Info
+    Write-Log "=== CLEANUP ==="-Level Info
+    Write-Log "" -Level Info
+}
+
+if ($CleanupIntelliJ) {
+    Write-Log "Afinstallerer IntelliJ IDEA..." -Level Info
+    
+    # Stop/kill IntelliJ processer først
+    $intellijProcesses = Get-Process -Name "idea64","idea" -ErrorAction SilentlyContinue
+    
+    if ($intellijProcesses) {
+        Write-Log "Stopper IntelliJ processer..." -Level Warning
+        foreach ($process in $intellijProcesses) {
+            try {
+                $process.Kill()
+                $process.WaitForExit(5000)
+                Write-Log "Stoppet proces: $($process.ProcessName) (PID: $($process.Id))" -Level Success
+            }
+            catch {
+                Write-Log "Kunne ikke stoppe proces $($process.ProcessName): $_" -Level Warning
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+    
+    try {
+        $uninstallProcess = Start-Process -FilePath "winget" -ArgumentList "uninstall","JetBrains.IntelliJIDEA.Ultimate","--silent","--accept-source-agreements" -NoNewWindow -Wait -PassThru
+        
+        if (-not $uninstallProcess.HasExited) {
+            Write-Log "Venter på at uninstall proces afsluttes..." -Level Info
+            $uninstallProcess.WaitForExit()
+        }
+        
+        # Tjek om "Un" uninstaller proces stadig kører
+        Start-Sleep -Seconds 2
+        $uninstallerProcess = Get-Process -Name "Un" -ErrorAction SilentlyContinue
+        if ($uninstallerProcess) {
+            Write-Log "Venter på IntelliJ uninstaller (Un.exe)..." -Level Info
+            $uninstallerProcess.WaitForExit()
+            Write-Log "Uninstaller proces afsluttet" -Level Success
+        }
+        
+        if ($uninstallProcess.ExitCode -eq 0) {
+            Write-Log "IntelliJ IDEA afinstalleret succesfuldt" -Level Success
+        } else {
+            Write-Log "ADVARSEL: Afinstallation returnerede exit code: $($uninstallProcess.ExitCode)" -Level Warning
+        }
+        
+        # Fjern resterende filer
+        Start-Sleep -Seconds 2
+        $intellijPath = "C:\Program Files\JetBrains\IntelliJ IDEA*"
+        if (Test-Path $intellijPath) {
+            Write-Log "Fjerner resterende IntelliJ filer..." -Level Info
+            Get-ChildItem "C:\Program Files\JetBrains\IntelliJ IDEA*" -ErrorAction SilentlyContinue | ForEach-Object {
+                Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    catch {
+        Write-Log "FEJL ved afinstallation af IntelliJ: $_" -Level Error
+    }
+}
+
+if ($Cleanup) {
+    Write-Log "Sletter Quarkus repository..." -Level Info
+    
+    if (Test-Path $quarkusRepoFolder) {
+        # Brug robocopy til at slette repository med lange stier
+        $emptyFolder = Join-Path $env:TEMP "empty_temp_$(Get-Random)"
+        try {
+            # Opret tom folder
+            New-Item -Path $emptyFolder -ItemType Directory -Force | Out-Null
+            
+            # Brug robocopy til at spejle tom folder til repository (sletter alt indhold)
+            robocopy $emptyFolder $quarkusRepoFolder /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS | Out-Null
+            
+            # Slet begge folders
+            if (Test-Path $quarkusRepoFolder) {
+                Remove-Item $quarkusRepoFolder -Force -Recurse -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $emptyFolder) {
+                Remove-Item $emptyFolder -Force -Recurse -ErrorAction SilentlyContinue
+            }
+            
+            Write-Log "Quarkus repository slettet succesfuldt" -Level Success
+        }
+        catch {
+            Write-Log "FEJL ved sletning af repository: $_" -Level Error
+        }
+    } else {
+        Write-Log "Quarkus repository findes ikke" -Level Warning
+    }
+}
+
+if ($CleanupIntelliJ) {
+    Write-Log "Afinstallerer IntelliJ IDEA..." -Level Info
+    
+    # Stop/kill IntelliJ processer først
+    $intellijProcesses = Get-Process -Name "idea64","idea" -ErrorAction SilentlyContinue
+    
+    if ($intellijProcesses) {
+        Write-Log "Stopper IntelliJ processer..." -Level Warning
+        foreach ($process in $intellijProcesses) {
+            try {
+                $process.Kill()
+                $process.WaitForExit(5000)
+                Write-Log "Stoppet proces: $($process.ProcessName) (PID: $($process.Id))" -Level Success
+            }
+            catch {
+                Write-Log "Kunne ikke stoppe proces $($process.ProcessName): $_" -Level Warning
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+    
+    try {
+        $uninstallProcess = Start-Process -FilePath "winget" -ArgumentList "uninstall","JetBrains.IntelliJIDEA.Ultimate","--silent","--accept-source-agreements" -NoNewWindow -Wait -PassThru
+        
+        if (-not $uninstallProcess.HasExited) {
+            Write-Log "Venter på at uninstall proces afsluttes..." -Level Info
+            $uninstallProcess.WaitForExit()
+        }
+        
+        # Tjek om "Un" uninstaller proces stadig kører
+        Start-Sleep -Seconds 2
+        $uninstallerProcess = Get-Process -Name "Un" -ErrorAction SilentlyContinue
+        if ($uninstallerProcess) {
+            Write-Log "Venter på IntelliJ uninstaller (Un.exe)..." -Level Info
+            $uninstallerProcess.WaitForExit()
+            Write-Log "Uninstaller proces afsluttet" -Level Success
+        }
+        
+        if ($uninstallProcess.ExitCode -eq 0) {
+            Write-Log "IntelliJ IDEA afinstalleret succesfuldt" -Level Success
+        } else {
+            Write-Log "ADVARSEL: Afinstallation returnerede exit code: $($uninstallProcess.ExitCode)" -Level Warning
+        }
+        
+        # Fjern resterende filer
+        Start-Sleep -Seconds 2
+        $intellijPath = "C:\Program Files\JetBrains\IntelliJ IDEA*"
+        if (Test-Path $intellijPath) {
+            Write-Log "Fjerner resterende IntelliJ filer..." -Level Info
+            Get-ChildItem "C:\Program Files\JetBrains\IntelliJ IDEA*" -ErrorAction SilentlyContinue | ForEach-Object {
+                Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    catch {
+        Write-Log "FEJL ved afinstallation af IntelliJ: $_" -Level Error
+    }
+}
+
+if ($Cleanup) {
+    Write-Log "Sletter Quarkus repository..." -Level Info
+    
+    if (Test-Path $quarkusRepoFolder) {
+        # Brug robocopy mirror trick til at slette mappen (håndterer lange paths)
+        $emptyFolder = Join-Path $env:TEMP "empty_temp_$(Get-Random)"
+        try {
+            # Opret tom folder
+            New-Item -Path $emptyFolder -ItemType Directory -Force | Out-Null
+            
+            # Brug robocopy til at spejle tom folder til repository (sletter alt indhold)
+            robocopy $emptyFolder $quarkusRepoFolder /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS | Out-Null
+            
+            # Slet begge folders
+            if (Test-Path $quarkusRepoFolder) {
+                Remove-Item $quarkusRepoFolder -Force -Recurse -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $emptyFolder) {
+                Remove-Item $emptyFolder -Force -Recurse -ErrorAction SilentlyContinue
+            }
+            
+            Write-Log "Quarkus repository slettet succesfuldt" -Level Success
+        }
+        catch {
+            Write-Log "FEJL ved sletning af repository: $_" -Level Error
+        }
+    } else {
+        Write-Log "Quarkus repository findes ikke" -Level Warning
+    }
+}
+
+if ($CleanupGit) {
+    Write-Log "Afinstallerer Git..." -Level Info
+    
+    try {
+        $gitVersion = git --version 2>$null
+        if ($gitVersion) {
+            try {
+                $uninstallProcess = Start-Process -FilePath "winget" -ArgumentList "uninstall","Git.Git","--silent","--accept-source-agreements" -NoNewWindow -Wait -PassThru
+
+                if (-not $uninstallProcess.HasExited) {
+                    Write-Log "Venter på at uninstall proces afsluttes..." -Level Info
+                    $uninstallProcess.WaitForExit()
+                }
+                
+                if ($uninstallProcess.ExitCode -eq 0) {
+                    Write-Log "Git afinstalleret succesfuldt" -Level Success
+                } else {
+                    Write-Log "ADVARSEL: Git afinstallation returnerede exit code: $($uninstallProcess.ExitCode)" -Level Warning
+                }
+            }
+            catch {
+                Write-Log "FEJL ved afinstallation af Git: $_" -Level Error
+            }
+        } else {
+            Write-Log "Git er ikke installeret" -Level Warning
+        }
+    }
+    catch {
+        Write-Log "Git er ikke installeret" -Level Warning
+    }
+}
+
+if ($Cleanup -or $CleanupIntelliJ -or $CleanupGit) {
+    Write-Log "" -Level Info
+    Write-Log "Cleanup gennemført" -Level Success
+}
 #endregion
 
 Set-Location $env:USERPROFILE
